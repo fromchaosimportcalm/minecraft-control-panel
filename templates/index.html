@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Minecraft Control</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:650px;margin:auto;padding:18px;background:#111;color:#eee}
+h1{font-size:1.5rem}
+.card{background:#1d1d1d;border-radius:14px;padding:16px;margin:12px 0}
+label{display:block;margin-bottom:6px;color:#aaa}
+select,input,button{font:inherit;border-radius:10px;border:1px solid #444;padding:12px;background:#292929;color:#fff}
+select,input{width:100%;box-sizing:border-box}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+button{cursor:pointer;font-weight:600}
+button:active{transform:scale(.98)}
+.wide{width:100%;margin-top:10px}
+.status{position:sticky;bottom:0;min-height:24px;padding:12px 0;background:#111;color:#aaa}
+.place,.who{display:flex;gap:8px;margin-bottom:8px}
+.place .go,.who .go{flex:1;text-align:left}
+.go small{display:block;color:#888;font-weight:400}
+.place .small,.who .small{width:48px;padding:12px 0;color:#bbb;text-align:center;text-decoration:none;border-radius:10px;border:1px solid #444;background:#292929}
+.who .go.selected{border-color:#6a6}
+.empty{color:#888}
+.note{color:#888;font-size:.9rem;margin:8px 0 0}
+.on{border-color:#6a6}
+.row{display:flex;gap:10px;align-items:center}
+.row select{flex:1}
+h3 .muted{color:#888;font-weight:400;font-size:.9rem}
+h4{margin:16px 0 8px;color:#aaa;font-weight:500}
+</style>
+</head>
+<body>
+<h1>⛏️ Minecraft Control</h1>
+
+<div class="card">
+<h3>Online now</h3>
+<div id="online"><p class="empty">Loading…</p></div>
+{% if map_port %}<a class="wide" id="maplink" target="_blank" style="display:block;text-align:center;color:#eee;text-decoration:none;padding:12px;border:1px solid #444;border-radius:10px;background:#292929;font-weight:600;box-sizing:border-box">🗺️ Open live map</a>{% endif %}
+</div>
+
+<div class="card">
+<label>Player</label>
+<select id="player" onchange="loadOnline()">
+{% for p in players %}<option>{{p}}</option>{% endfor %}
+</select>
+<div class="grid" style="margin-top:10px">
+<button onclick="action('creative')">🔵 Creative</button>
+<button onclick="action('survival')">🟢 Survival</button>
+<button onclick="action('spectator')">👻 Spectator</button>
+<button onclick="action('heal')">❤️ Heal &amp; feed</button>
+</div>
+<h4>Send to another player</h4>
+<div class="row">
+<select id="target">
+{% for p in players %}<option>{{p}}</option>{% endfor %}
+</select>
+<button onclick="sendTo()">➡️ Send</button>
+</div>
+</div>
+
+<div class="card">
+<h3>Places</h3>
+<div id="places"><p class="empty">Loading…</p></div>
+<p class="note">🛏️ sets the selected player's respawn point to that place.</p>
+<h4>Add a place</h4>
+<input id="pname" placeholder="Name, e.g. Myles's house">
+<div class="grid" style="margin-top:10px">
+<button onclick="saveHere()">📌 Save where player is</button>
+<button onclick="saveTyped()">💾 Save X/Y/Z below</button>
+</div>
+</div>
+
+<div class="card">
+<h3>Teleport</h3>
+<div class="grid">
+<input id="x" placeholder="X">
+<input id="y" placeholder="Y">
+<input id="z" placeholder="Z">
+<select id="dim">
+<option value="minecraft:overworld">Overworld</option>
+<option value="minecraft:the_nether">Nether</option>
+<option value="minecraft:the_end">The End</option>
+</select>
+</div>
+<button class="wide" onclick="tp()">📍 Teleport</button>
+</div>
+
+<div class="card">
+<h3>World <span class="muted" id="diff"></span></h3>
+<div class="grid">
+<button onclick="action('day')">☀️ Day</button>
+<button onclick="action('night')">🌙 Night</button>
+<button onclick="action('clear')">🌤️ Clear Weather</button>
+<button onclick="action('rain')">🌧️ Rainy Weather</button>
+<button id="btn-peaceful" onclick="action('peaceful')">🕊️ Peaceful</button>
+<button id="btn-normal" onclick="action('normal')">⚔️ Normal</button>
+</div>
+</div>
+
+<div id="status" class="status"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const DIM_NAMES = {'minecraft:overworld':'Overworld','minecraft:the_nether':'Nether','minecraft:the_end':'The End'};
+const MAP_PORT = {{ map_port|tojson }};
+
+function mapUrl(x, z, dim) {
+  const u = `${location.protocol}//${location.hostname}:${MAP_PORT}/`;
+  if (x === undefined) return u;
+  return u + `?world=${(dim || 'minecraft:overworld').replace(':', '_')}&zoom=4&x=${x}&z=${z}`;
+}
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function mapButton(x, z, dim) {
+  const a = el('a', 'small', '🗺️');
+  a.href = mapUrl(x, z, dim);
+  a.target = '_blank';
+  a.title = 'Show on map';
+  return a;
+}
+
+// Only used when the server sets API_TOKEN: asked for once, then remembered in this browser.
+function token() {
+  try { return localStorage.getItem('mcpanel-token') || ''; } catch (e) { return ''; }
+}
+async function api(url, opts = {}) {
+  opts.headers = Object.assign({'X-API-Token': token()}, opts.headers);
+  const r = await fetch(url, opts);
+  if (r.status === 401) {
+    const t = prompt('Panel password');
+    if (t) {
+      try { localStorage.setItem('mcpanel-token', t); } catch (e) {}
+      return api(url, opts);
+    }
+  }
+  return r.json();
+}
+async function call(url, body) {
+  const d = await api(url, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)
+  });
+  $('status').textContent =
+    d.ok ? ('✓ ' + (d.output || 'Done')) : ('✗ ' + d.error);
+  if (d.places) renderPlaces(d.places);
+  loadOnline();
+  return d;
+}
+
+function renderOnline(d) {
+  const box = $('online');
+  box.replaceChildren();
+  if (!d.players.length) box.append(el('p', 'empty', 'Nobody is playing right now.'));
+  for (const pl of d.players) {
+    const row = el('div', 'who');
+    const go = el('button', 'go' + (pl.name === $('player').value ? ' selected' : ''), '🧍 ' + pl.name);
+    go.append(el('small', '', pl.x === undefined ? 'position unknown'
+      : `${pl.x} ${pl.y} ${pl.z} · ${DIM_NAMES[pl.dimension] || pl.dimension}`));
+    go.title = 'Select ' + pl.name;
+    go.onclick = () => { $('player').value = pl.name; loadOnline(); };
+    row.append(go);
+    if (MAP_PORT && pl.x !== undefined) row.append(mapButton(pl.x, pl.z, pl.dimension));
+    box.append(row);
+  }
+  $('diff').textContent = d.difficulty ? '· ' + d.difficulty : '';
+  $('btn-peaceful').classList.toggle('on', d.difficulty === 'peaceful');
+  $('btn-normal').classList.toggle('on', d.difficulty === 'normal');
+}
+async function loadOnline() {
+  try { renderOnline(await api('/api/online')); } catch (e) {}
+}
+
+function renderPlaces(places) {
+  const box = $('places');
+  box.replaceChildren();
+  if (!places.length) {
+    box.append(el('p', 'empty', 'No places yet. Stand somewhere and press "Save where player is".'));
+    return;
+  }
+  for (const pl of places) {
+    const row = el('div', 'place');
+    const go = el('button', 'go', '🏠 ' + pl.name);
+    go.append(el('small', '', `${pl.x} ${pl.y} ${pl.z} · ${DIM_NAMES[pl.dimension] || pl.dimension}`));
+    go.onclick = () => call('/api/tp', {player:$('player').value, x:pl.x, y:pl.y, z:pl.z, dimension:pl.dimension});
+    const bed = el('button', 'small', '🛏️');
+    bed.title = 'Respawn the selected player here';
+    bed.onclick = () => call('/api/spawn', {player:$('player').value, place:pl.name});
+    const del = el('button', 'small', '✕');
+    del.title = 'Remove ' + pl.name;
+    del.onclick = () => confirm('Remove ' + pl.name + '?') && call('/api/places/delete', {name:pl.name});
+    row.append(go, bed);
+    if (MAP_PORT) row.append(mapButton(pl.x, pl.z, pl.dimension));
+    row.append(del);
+    box.append(row);
+  }
+}
+async function loadPlaces() {
+  const d = await api('/api/places');
+  if (d.places) renderPlaces(d.places);
+}
+async function saveHere() {
+  const d = await call('/api/places', {name:$('pname').value, from_player:$('player').value});
+  if (d.ok) $('pname').value = '';
+}
+async function saveTyped() {
+  const d = await call('/api/places', {name:$('pname').value, x:$('x').value, y:$('y').value, z:$('z').value, dimension:$('dim').value});
+  if (d.ok) $('pname').value = '';
+}
+function action(a) {
+  call('/api/action', {player:$('player').value, action:a});
+}
+function sendTo() {
+  call('/api/tp', {player:$('player').value, target:$('target').value});
+}
+function tp() {
+  call('/api/tp', {
+    player:$('player').value,
+    x:$('x').value,
+    y:$('y').value,
+    z:$('z').value,
+    dimension:$('dim').value
+  });
+}
+if (MAP_PORT) $('maplink').href = mapUrl();
+loadPlaces();
+loadOnline();
+setInterval(loadOnline, 5000);
+</script>
+</body>
+</html>

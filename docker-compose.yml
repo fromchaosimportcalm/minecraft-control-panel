@@ -1,0 +1,18 @@
+services:
+  minecraft-control:
+    build: .
+    container_name: minecraft-control
+    restart: unless-stopped
+    ports:
+      - "${PANEL_PORT:-8080}:8080"
+    environment:
+      # All of these come from .env (copy .env.example to .env and edit it).
+      MC_CONTAINER: ${MC_CONTAINER:-minecraft}
+      PLAYERS: ${PLAYERS:?set PLAYERS in .env}
+      API_TOKEN: ${API_TOKEN:-}
+      MAP_PORT: ${MAP_PORT:-}
+    volumes:
+      # Lets this container run `docker exec <MC_CONTAINER> rcon-cli` against Minecraft.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Saved teleport places (places.json) live here so rebuilds keep them.
+      - ./data:/app/data
