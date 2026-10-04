@@ -24,7 +24,7 @@ A small web page for running a family or friends Minecraft server from your PC o
 On the machine running Minecraft:
 
 ```bash
-git clone <this repo> minecraft-control
+git clone https://github.com/fromchaosimportcalm/minecraft-control-panel.git minecraft-control
 cd minecraft-control
 cp .env.example .env
 nano .env                    # set PLAYERS (and MC_CONTAINER if yours isn't called "minecraft")
@@ -92,3 +92,7 @@ docker exec <MC_CONTAINER> rcon-cli -- <command>
 - Dimensions must be one of the three vanilla ones.
 
 Nothing typed in the browser reaches the server console unchecked.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
