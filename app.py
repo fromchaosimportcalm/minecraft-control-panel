@@ -78,8 +78,6 @@ def action():
         args = ["gamemode", "creative", player]
     elif action == "survival":
         args = ["gamemode", "survival", player]
-    elif action == "spectator":
-        args = ["gamemode", "spectator", player]
     elif action == "day":
         args = ["time", "set", "day"]
     elif action == "night":
@@ -94,6 +92,9 @@ def action():
         args = ["difficulty", "peaceful"]
     elif action == "normal":
         args = ["difficulty", "normal"]
+    elif action == "nightvision":
+        # 10 minutes, no particles so it doesn't cloud their view.
+        args = ["effect", "give", player, "minecraft:night_vision", "600", "0", "true"]
     elif action == "heal":
         # Instant health maxes out hearts; one tick of high saturation fills hunger.
         rc, out1 = run_mc(["effect", "give", player, "minecraft:instant_health", "1", "10", "true"])

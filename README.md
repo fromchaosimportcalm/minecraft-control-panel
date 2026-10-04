@@ -3,8 +3,9 @@
 A small web page for running a family or friends Minecraft server from your PC or phone. You don't have to type commands in-game. Built for a parent getting kids where they need to be, not for locking anything down.
 
 - **Online now**: who's playing, where they are and which dimension they're in (refreshes every 5 seconds)
-- **Gamemode**: Creative, Survival, Spectator
+- **Gamemode**: Creative, Survival
 - **❤️ Heal & feed**: full hearts and hunger
+- **🔦 Night vision**: see clearly in caves and at night for 10 minutes
 - **Send to another player**: works across dimensions
 - **Places**: saved spots (houses, farms, portals) with one-click teleport
   - **📌 Save where player is**: saves a spot without typing coordinates
