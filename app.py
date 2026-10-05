@@ -43,7 +43,7 @@ KITS = {
         ("diamond_pickaxe[enchantments={efficiency:5,unbreaking:3,fortune:3,mending:1}]", 1),
         ("diamond_axe" + TOOL, 1), ("diamond_shovel" + TOOL, 1), ("shears", 1)]),
     "bow": ("Bow kit", [
-        ("bow[enchantments={power:5,unbreaking:3,infinity:1}]", 1), ("arrow", 1)]),
+        ("bow[enchantments={power:5,unbreaking:3,infinity:1}]", 1), ("arrow", 64)]),
     "food": ("Food", [("cooked_beef", 64), ("golden_carrot", 32), ("golden_apple", 4)]),
     "explorer": ("Explorer kit", [
         ("torch", 64), ("white_bed", 1), ("oak_boat", 1), ("compass", 1), ("ender_pearl", 16)]),

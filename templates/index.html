@@ -67,7 +67,7 @@ h4{margin:16px 0 8px;color:#aaa;font-weight:500}
 <div class="grid">
 {% for id, kit in kits.items() %}<button onclick="giveKit('{{id}}')">{{ kit_icons.get(id, '🎁') }} {{kit[0]}}</button>
 {% endfor %}</div>
-<p class="note">Diamond, netherite, tools and elytra come fully enchanted. Kits land in the inventory, so they still need to put the armor on.</p>
+<p class="note">Diamond, netherite, tools and elytra come fully enchanted, and the bow has Infinity, so arrows never run out. Kits land in the inventory, so they still need to put the armor on.</p>
 <h4>Any item</h4>
 <input id="item" list="items" placeholder="Type to search, e.g. golden apple" autocomplete="off">
 <datalist id="items"></datalist>
