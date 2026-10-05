@@ -9,6 +9,7 @@ services:
       # All of these come from .env (copy .env.example to .env and edit it).
       MC_CONTAINER: ${MC_CONTAINER:-minecraft}
       PLAYERS: ${PLAYERS:?set PLAYERS in .env}
+      PEOPLE: ${PEOPLE:-}
       API_TOKEN: ${API_TOKEN:-}
       MAP_PORT: ${MAP_PORT:-}
     volumes:

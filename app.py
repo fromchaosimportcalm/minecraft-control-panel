@@ -15,6 +15,9 @@ PLACES_FILE = os.environ.get("PLACES_FILE", "/app/data/places.json")
 MAP_PORT = os.environ.get("MAP_PORT", "")
 
 PLAYERS = [p.strip() for p in os.environ.get("PLAYERS", "").split(",") if p.strip()]
+# Who places can belong to. These are people, not accounts, since kids may share one.
+# Empty hides place owners entirely.
+PEOPLE = [p.strip() for p in os.environ.get("PEOPLE", "").split(",") if p.strip()]
 
 DIMENSIONS = ["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"]
 NUM = re.compile(r"^-?\d+(?:\.\d+)?$")
@@ -153,7 +156,7 @@ def player_position(player):
 
 @app.get("/")
 def index():
-    return render_template("index.html", players=PLAYERS, map_port=MAP_PORT,
+    return render_template("index.html", players=PLAYERS, people=PEOPLE, map_port=MAP_PORT,
                            kits=KITS, kit_icons=KIT_ICONS)
 
 @app.post("/api/action")
@@ -381,6 +384,9 @@ def add_place():
     name = str(data.get("name", "")).strip()[:40]
     if not name:
         return jsonify(ok=False, error="Give the place a name"), 400
+    owner = data.get("for") or ""
+    if owner and owner not in PEOPLE:
+        return jsonify(ok=False, error="Unknown person"), 400
 
     if data.get("from_player"):
         player = data.get("from_player")
@@ -401,11 +407,36 @@ def add_place():
 
     with places_lock:
         places = [p for p in load_places() if p["name"].lower() != name.lower()]
-        places.append({"name": name, "x": x, "y": y, "z": z, "dimension": dim})
+        place = {"name": name, "x": x, "y": y, "z": z, "dimension": dim}
+        if owner:
+            place["for"] = owner
+        places.append(place)
         places.sort(key=lambda p: p["name"].lower())
         save_places(places)
 
     return jsonify(ok=True, output=f"Saved {name} ({x} {y} {z})", places=places)
+
+@app.post("/api/places/owner")
+def set_place_owner():
+    if not authorized():
+        return jsonify(ok=False, error="Unauthorized"), 401
+
+    data = request.get_json(force=True)
+    name = str(data.get("name", ""))
+    owner = data.get("for") or ""
+    if owner and owner not in PEOPLE:
+        return jsonify(ok=False, error="Unknown person"), 400
+    with places_lock:
+        places = load_places()
+        place = next((p for p in places if p["name"] == name), None)
+        if not place:
+            return jsonify(ok=False, error="Unknown place"), 400
+        place.pop("for", None)
+        if owner:
+            place["for"] = owner
+        save_places(places)
+    whose = f"{owner}'s" if owner else "for everyone"
+    return jsonify(ok=True, output=f"{name} is now {whose}", places=places)
 
 @app.post("/api/places/delete")
 def delete_place():

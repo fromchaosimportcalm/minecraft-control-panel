@@ -13,6 +13,7 @@ A small web page for running a family or friends Minecraft server from your PC o
 - **Places**: saved spots (houses, farms, portals) with one-click teleport
   - **📌 Save where player is**: saves a spot without typing coordinates
   - **🛏️ Respawn here**: sets a player's respawn point to a place
+  - **Per-person places** (optional): mark a place as one person's, then filter the list to theirs plus the shared ones. Each browser remembers its filter.
 - **Teleport** to typed coordinates in any dimension (`~` relative coordinates work)
 - **World**: day/night, clear/rain, Peaceful/Normal difficulty
 - **Server**: turn Minecraft off, on or restart it without kicking anyone
@@ -47,6 +48,7 @@ Open `http://<server-ip>:8080`.
 | Setting | What it does |
 |---|---|
 | `PLAYERS` | Comma-separated usernames the panel can control. Required. |
+| `PEOPLE` | Optional. Names places can belong to, e.g. `Mum,Sam,Alex`. People, not accounts, so kids sharing an account still get their own places. Empty keeps one shared list. |
 | `MC_CONTAINER` | Your Minecraft container's name (`docker ps`). Default `minecraft`. |
 | `PANEL_PORT` | Port for the panel. Default `8080`. |
 | `API_TOKEN` | Optional password. The browser asks once and remembers it. |

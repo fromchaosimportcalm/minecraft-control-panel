@@ -83,10 +83,17 @@ h4{margin:16px 0 8px;color:#aaa;font-weight:500}
 
 <div class="card">
 <h3>Places</h3>
+{% if people %}<div id="pfilter" class="chips" style="margin:0 0 10px"></div>{% endif %}
 <div id="places"><p class="empty">Loading…</p></div>
 <p class="note">🛏️ sets the selected player's respawn point to that place.</p>
+{% if people %}<button class="wide" id="pedit" onclick="toggleEdit()">✏️ Change who places are for</button>{% endif %}
 <h4>Add a place</h4>
+{% if people %}<div class="row">
 <input id="pname" placeholder="Name, e.g. Myles's house">
+<select id="pfor" style="flex:0 0 40%"><option value="">For everyone</option>
+{% for p in people %}<option value="{{p}}">For {{p}}</option>{% endfor %}
+</select>
+</div>{% else %}<input id="pname" placeholder="Name, e.g. Myles's house">{% endif %}
 <div class="grid" style="margin-top:10px">
 <button onclick="saveHere()">📌 Save where player is</button>
 <button onclick="saveTyped()">💾 Save X/Y/Z below</button>
@@ -132,6 +139,7 @@ h4{margin:16px 0 8px;color:#aaa;font-weight:500}
 const $ = id => document.getElementById(id);
 const DIM_NAMES = {'minecraft:overworld':'Overworld','minecraft:the_nether':'Nether','minecraft:the_end':'The End'};
 const MAP_PORT = {{ map_port|tojson }};
+const PEOPLE = {{ people|tojson }};
 
 function mapUrl(x, z, dim) {
   const u = `${location.protocol}//${location.hostname}:${MAP_PORT}/`;
@@ -245,17 +253,61 @@ async function loadOnline() {
   try { renderOnline(await api('/api/online')); } catch (e) {}
 }
 
+// Place filter ('' = all) is remembered per browser, so a kid's tablet can stay on their places.
+let placeFilter = '', editing = false, lastPlaces = [];
+try { placeFilter = localStorage.getItem('mcpanel-placefilter') || ''; } catch (e) {}
+if (!PEOPLE.includes(placeFilter)) placeFilter = '';
+if (PEOPLE.length) $('pfor').value = placeFilter;
+
+function setFilter(f) {
+  placeFilter = f;
+  $('pfor').value = f;  // new places default to whoever's list you're looking at
+  try { localStorage.setItem('mcpanel-placefilter', f); } catch (e) {}
+  renderPlaces(lastPlaces);
+}
+function toggleEdit() {
+  editing = !editing;
+  $('pedit').textContent = editing ? '✓ Done' : '✏️ Change who places are for';
+  renderPlaces(lastPlaces);
+}
+function renderFilter() {
+  const box = $('pfilter');
+  box.replaceChildren();
+  for (const f of [''].concat(PEOPLE)) {
+    const b = el('button', f === placeFilter ? 'on' : '', f || 'All');
+    b.onclick = () => setFilter(f);
+    box.append(b);
+  }
+}
+function ownerPicker(pl) {
+  const sel = el('select');
+  sel.style.flex = '0 0 40%';
+  for (const f of [''].concat(PEOPLE)) sel.append(new Option(f ? 'For ' + f : 'For everyone', f));
+  sel.value = pl.for || '';
+  sel.onchange = () => call('/api/places/owner', {name:pl.name, for:sel.value});
+  return sel;
+}
 function renderPlaces(places) {
+  lastPlaces = places;
+  if (PEOPLE.length) renderFilter();
   const box = $('places');
   box.replaceChildren();
   if (!places.length) {
     box.append(el('p', 'empty', 'No places yet. Stand somewhere and press "Save where player is".'));
     return;
   }
-  for (const pl of places) {
+  const shown = places.filter(pl => editing || !placeFilter || !pl.for || pl.for === placeFilter);
+  if (!shown.length) box.append(el('p', 'empty', `No places for ${placeFilter} yet.`));
+  for (const pl of shown) {
     const row = el('div', 'place');
     const go = el('button', 'go', '🏠 ' + pl.name);
-    go.append(el('small', '', `${pl.x} ${pl.y} ${pl.z} · ${DIM_NAMES[pl.dimension] || pl.dimension}`));
+    const whose = pl.for && !placeFilter ? ' · ' + pl.for : '';
+    go.append(el('small', '', `${pl.x} ${pl.y} ${pl.z} · ${DIM_NAMES[pl.dimension] || pl.dimension}${whose}`));
+    if (editing) {
+      row.append(go, ownerPicker(pl));
+      box.append(row);
+      continue;
+    }
     go.onclick = () => call('/api/tp', {player:$('player').value, x:pl.x, y:pl.y, z:pl.z, dimension:pl.dimension});
     const bed = el('button', 'small', '🛏️');
     bed.title = 'Respawn the selected player here';
@@ -273,12 +325,13 @@ async function loadPlaces() {
   const d = await api('/api/places');
   if (d.places) renderPlaces(d.places);
 }
+function placeFor() { return PEOPLE.length ? $('pfor').value : ''; }
 async function saveHere() {
-  const d = await call('/api/places', {name:$('pname').value, from_player:$('player').value});
+  const d = await call('/api/places', {name:$('pname').value, from_player:$('player').value, for:placeFor()});
   if (d.ok) $('pname').value = '';
 }
 async function saveTyped() {
-  const d = await call('/api/places', {name:$('pname').value, x:$('x').value, y:$('y').value, z:$('z').value, dimension:$('dim').value});
+  const d = await call('/api/places', {name:$('pname').value, x:$('x').value, y:$('y').value, z:$('z').value, dimension:$('dim').value, for:placeFor()});
   if (d.ok) $('pname').value = '';
 }
 function action(a) {
