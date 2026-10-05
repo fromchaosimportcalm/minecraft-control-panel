@@ -7,11 +7,19 @@ A small web page for running a family or friends Minecraft server from your PC o
 - **❤️ Heal & feed**: full hearts and hunger
 - **🔦 Night vision**: see clearly in caves and at night for 10 minutes
 - **Send to another player**: works across dimensions
+- **Give items**
+  - **Kits**: one tap for iron, diamond or netherite gear, diamond tools, a bow kit, food, an explorer kit, or elytra and rockets. Diamond and netherite gear, tools and elytra come fully enchanted.
+  - **Any item**: type a name such as `golden apple` or `oak_log` and pick an amount, up to 640. Recent gives show as one-tap buttons.
 - **Places**: saved spots (houses, farms, portals) with one-click teleport
   - **📌 Save where player is**: saves a spot without typing coordinates
   - **🛏️ Respawn here**: sets a player's respawn point to a place
 - **Teleport** to typed coordinates in any dimension (`~` relative coordinates work)
 - **World**: day/night, clear/rain, Peaceful/Normal difficulty
+- **Server**: turn Minecraft off, on or restart it without kicking anyone
+  - With players on, the buttons become **Stop/Restart when everyone leaves**. The panel waits until the server is empty, and you can cancel.
+  - **Stop now** / **Restart now** warns players in chat and waits 30 seconds first.
+  - The world gets 90 seconds to save before stopping (Docker's default is 10).
+  - A server stopped from the panel stays off, even after a reboot, until you press **Start**.
 - **🗺️ Live map links**: optional, if you also run [squaremap](https://modrinth.com/plugin/squaremap)
 
 ## What you need
@@ -47,6 +55,8 @@ Open `http://<server-ip>:8080`.
 After editing `.env`, run `docker compose up -d`.
 
 Saved places are stored in `data/places.json`, which survives rebuilds and updates.
+
+A scheduled "stop when everyone leaves" lives in memory, so restarting the panel itself cancels it.
 
 ## Optional: live map (squaremap)
 
@@ -91,6 +101,8 @@ docker exec <MC_CONTAINER> rcon-cli -- <command>
 - Player names are checked against `PLAYERS`.
 - Coordinates must be numbers (`~` allowed for manual teleports).
 - Dimensions must be one of the three vanilla ones.
+- Server controls only run `docker stop`, `start` and `restart` on `MC_CONTAINER`.
+- Item names may only contain letters, numbers and `_`. Enchantments only come from the kits defined in `app.py`.
 
 Nothing typed in the browser reaches the server console unchecked.
 

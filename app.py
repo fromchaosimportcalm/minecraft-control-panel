@@ -18,7 +18,40 @@ PLAYERS = [p.strip() for p in os.environ.get("PLAYERS", "").split(",") if p.stri
 
 DIMENSIONS = ["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"]
 NUM = re.compile(r"^-?\d+(?:\.\d+)?$")
+ITEM_ID = re.compile(r"^[a-z0-9_]{1,64}$")
+MAX_GIVE = 640  # ten stacks; anything that doesn't fit drops at their feet
 places_lock = threading.Lock()
+
+ARMOR = "[enchantments={protection:4,unbreaking:3,mending:1}]"
+WEAPON = "[enchantments={sharpness:5,unbreaking:3,mending:1}]"
+TOOL = "[enchantments={efficiency:5,unbreaking:3,mending:1}]"
+
+# Kits are fixed here so item components (enchantments) never come from the browser.
+KITS = {
+    "iron": ("Iron gear", [
+        ("iron_helmet", 1), ("iron_chestplate", 1), ("iron_leggings", 1), ("iron_boots", 1),
+        ("iron_sword", 1), ("shield", 1)]),
+    "diamond": ("Diamond gear", [
+        ("diamond_helmet" + ARMOR, 1), ("diamond_chestplate" + ARMOR, 1),
+        ("diamond_leggings" + ARMOR, 1), ("diamond_boots" + ARMOR, 1),
+        ("diamond_sword" + WEAPON, 1), ("shield", 1)]),
+    "netherite": ("Netherite gear", [
+        ("netherite_helmet" + ARMOR, 1), ("netherite_chestplate" + ARMOR, 1),
+        ("netherite_leggings" + ARMOR, 1), ("netherite_boots" + ARMOR, 1),
+        ("netherite_sword" + WEAPON, 1), ("shield", 1)]),
+    "tools": ("Diamond tools", [
+        ("diamond_pickaxe[enchantments={efficiency:5,unbreaking:3,fortune:3,mending:1}]", 1),
+        ("diamond_axe" + TOOL, 1), ("diamond_shovel" + TOOL, 1), ("shears", 1)]),
+    "bow": ("Bow kit", [
+        ("bow[enchantments={power:5,unbreaking:3,infinity:1}]", 1), ("arrow", 1)]),
+    "food": ("Food", [("cooked_beef", 64), ("golden_carrot", 32), ("golden_apple", 4)]),
+    "explorer": ("Explorer kit", [
+        ("torch", 64), ("white_bed", 1), ("oak_boat", 1), ("compass", 1), ("ender_pearl", 16)]),
+    "elytra": ("Elytra & rockets", [
+        ("elytra[enchantments={unbreaking:3,mending:1}]", 1), ("firework_rocket", 64)]),
+}
+KIT_ICONS = {"iron": "🪖", "diamond": "💎", "netherite": "🛡️", "tools": "⛏️",
+             "bow": "🏹", "food": "🍖", "explorer": "🔦", "elytra": "🪽"}
 
 def run_mc(args):
     cmd = ["docker", "exec", "-i", MC_CONTAINER, "rcon-cli", "--"] + args
@@ -27,6 +60,66 @@ def run_mc(args):
         return p.returncode, (p.stdout + p.stderr).strip()
     except Exception as e:
         return 1, str(e)
+
+def run_docker(args, timeout=10):
+    try:
+        p = subprocess.run(["docker"] + args, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout + p.stderr).strip()
+    except Exception as e:
+        return 1, str(e)
+
+def server_state():
+    """'running', 'starting', 'stopped' or 'unknown'."""
+    rc, out = run_docker(["inspect", "-f",
+                          "{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}",
+                          MC_CONTAINER])
+    if rc != 0:
+        return "unknown"
+    status, _, health = out.partition(" ")
+    if status != "running":
+        return "stopped"
+    return "starting" if health.strip() == "starting" else "running"
+
+def online_names():
+    _, out = run_mc(["list"])
+    names = out.split(":", 1)[1] if ":" in out else ""
+    return [n.strip() for n in names.split(",") if n.strip()]
+
+# Paper can take a while to save a big world; Docker's default 10s would kill it mid-save.
+STOP_GRACE = "90"
+WARN_SECONDS = 30
+# At most one stop/restart in flight: {"op", "phase", "cancel"}, where phase is
+# "waiting" (for everyone to leave), "warning" (countdown in chat) or "working" (docker is on it).
+pending = None
+pending_lock = threading.Lock()
+
+def pending_info():
+    with pending_lock:
+        return {"op": pending["op"], "phase": pending["phase"]} if pending else None
+
+def power_worker(job):
+    """Runs a stop/restart in the background so requests return straight away."""
+    global pending
+    op, cancel = job["op"], job["cancel"]
+    if job["phase"] == "warning":
+        verb = "stopping" if op == "stop" else "restarting"
+        run_mc(["say", f"The server is {verb} in {WARN_SECONDS} seconds."])
+        cancel.wait(WARN_SECONDS)
+    elif job["phase"] == "waiting":
+        # Check every 15 seconds; stop waiting if the server goes down some other way.
+        while not cancel.wait(15):
+            if server_state() != "running" or not online_names():
+                break
+    with pending_lock:
+        if pending is not job:
+            return  # cancelled
+        if job["phase"] == "waiting" and server_state() != "running":
+            pending = None
+            return
+        job["phase"] = "working"
+    run_docker([op, "-t", STOP_GRACE, MC_CONTAINER], timeout=150)
+    with pending_lock:
+        pending = None
 
 def authorized():
     if not API_TOKEN:
@@ -60,7 +153,8 @@ def player_position(player):
 
 @app.get("/")
 def index():
-    return render_template("index.html", players=PLAYERS, map_port=MAP_PORT)
+    return render_template("index.html", players=PLAYERS, map_port=MAP_PORT,
+                           kits=KITS, kit_icons=KIT_ICONS)
 
 @app.post("/api/action")
 def action():
@@ -108,22 +202,114 @@ def action():
     rc, output = run_mc(args)
     return jsonify(ok=(rc == 0), output=output)
 
+def give_error(player, out):
+    if "No player was found" in out:
+        return f"{player} isn't online"
+    return out.splitlines()[0] if out else "Give failed"
+
+@app.post("/api/give")
+def give():
+    if not authorized():
+        return jsonify(ok=False, error="Unauthorized"), 401
+
+    data = request.get_json(force=True)
+    player = data.get("player", "")
+    if player not in PLAYERS:
+        return jsonify(ok=False, error="Player not allowed"), 400
+
+    kit = data.get("kit")
+    if kit:
+        if kit not in KITS:
+            return jsonify(ok=False, error="Unknown kit"), 400
+        name, items = KITS[kit]
+        for item, count in items:
+            rc, out = run_mc(["give", player, "minecraft:" + item, str(count)])
+            if rc != 0 or not out.startswith("Gave"):
+                return jsonify(ok=False, error=give_error(player, out))
+        return jsonify(ok=True, output=f"Gave {name} to {player}")
+
+    # Accept "Golden Apple", "golden_apple" or "minecraft:golden_apple".
+    item = str(data.get("item", "")).strip().lower().removeprefix("minecraft:").replace(" ", "_")
+    if not ITEM_ID.match(item):
+        return jsonify(ok=False, error="Type an item name, e.g. golden apple"), 400
+    try:
+        count = int(data.get("count", 1))
+    except (TypeError, ValueError):
+        count = 0
+    if not 1 <= count <= MAX_GIVE:
+        return jsonify(ok=False, error=f"Amount must be 1 to {MAX_GIVE}"), 400
+
+    rc, out = run_mc(["give", player, "minecraft:" + item, str(count)])
+    if rc != 0 or not out.startswith("Gave"):
+        return jsonify(ok=False, error=give_error(player, out))
+    return jsonify(ok=True, output=out)
+
+@app.post("/api/server")
+def server_power():
+    global pending
+    if not authorized():
+        return jsonify(ok=False, error="Unauthorized"), 401
+
+    data = request.get_json(force=True)
+    op = data.get("op", "")
+    state = server_state()
+
+    if op == "cancel":
+        with pending_lock:
+            if not pending or pending["phase"] == "working":
+                return jsonify(ok=False, error="Nothing to cancel")
+            pending["cancel"].set()
+            pending = None
+        if state == "running":
+            run_mc(["say", "Never mind, the server is staying on."])
+        return jsonify(ok=True, output="Cancelled")
+
+    if op == "start":
+        if state != "stopped":
+            return jsonify(ok=False, error="The server is already on")
+        rc, out = run_docker(["start", MC_CONTAINER], timeout=30)
+        if rc != 0:
+            return jsonify(ok=False, error=out or "Start failed")
+        return jsonify(ok=True, output="Starting… it takes a minute or two")
+
+    mode = data.get("mode", "empty")
+    if op not in ("stop", "restart") or mode not in ("empty", "now"):
+        return jsonify(ok=False, error="Unknown option"), 400
+    if state == "stopped":
+        return jsonify(ok=False, error="The server is already off")
+
+    # Nobody on: no reason to wait or warn.
+    anyone = state == "running" and bool(online_names())
+    phase = ("waiting" if mode == "empty" else "warning") if anyone else "working"
+    with pending_lock:
+        if pending:
+            return jsonify(ok=False, error="Already busy. Cancel that first.")
+        pending = {"op": op, "phase": phase, "cancel": threading.Event()}
+        threading.Thread(target=power_worker, args=(pending,), daemon=True).start()
+
+    if phase == "waiting":
+        return jsonify(ok=True, output=f"Will {op} once everyone has left")
+    if phase == "warning":
+        return jsonify(ok=True, output=f"Warned players: {op} in {WARN_SECONDS} seconds")
+    return jsonify(ok=True, output="Stopping…" if op == "stop" else "Restarting… back in a minute or two")
+
 @app.get("/api/online")
 def online():
     if not authorized():
         return jsonify(ok=False, error="Unauthorized"), 401
-    _, out = run_mc(["list"])
-    names = out.split(":", 1)[1] if ":" in out else ""
+    state = server_state()
+    scheduled = pending_info()
+    if state != "running":
+        return jsonify(ok=True, players=[], difficulty=None, server=state, pending=scheduled)
     players = []
-    for name in (n.strip() for n in names.split(",")):
-        if not name:
-            continue
+    for name in online_names():
         pos = player_position(name)
         players.append({"name": name, "x": pos[0], "y": pos[1], "z": pos[2], "dimension": pos[3]}
                        if pos else {"name": name})
     _, diff = run_mc(["difficulty"])
     m = re.search(r"difficulty is (\w+)", diff)
-    return jsonify(ok=True, players=players, difficulty=m.group(1).lower() if m else None)
+    return jsonify(ok=True, players=players, difficulty=m.group(1).lower() if m else None,
+                   server=state, pending=scheduled)
 
 @app.post("/api/tp")
 def teleport():

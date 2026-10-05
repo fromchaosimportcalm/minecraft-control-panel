@@ -27,6 +27,10 @@ button:active{transform:scale(.98)}
 .row select{flex:1}
 h3 .muted{color:#888;font-weight:400;font-size:.9rem}
 h4{margin:16px 0 8px;color:#aaa;font-weight:500}
+.small-amt{padding:12px 10px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.danger{color:#e88;border-color:#744}
+.chips button{padding:8px 12px;font-weight:400;font-size:.9rem}
 </style>
 </head>
 <body>
@@ -56,6 +60,25 @@ h4{margin:16px 0 8px;color:#aaa;font-weight:500}
 </select>
 <button onclick="sendTo()">➡️ Send</button>
 </div>
+</div>
+
+<div class="card">
+<h3>Give items <span class="muted">to the selected player</span></h3>
+<div class="grid">
+{% for id, kit in kits.items() %}<button onclick="giveKit('{{id}}')">{{ kit_icons.get(id, '🎁') }} {{kit[0]}}</button>
+{% endfor %}</div>
+<p class="note">Diamond, netherite, tools and elytra come fully enchanted. Kits land in the inventory, so they still need to put the armor on.</p>
+<h4>Any item</h4>
+<input id="item" list="items" placeholder="Type to search, e.g. golden apple" autocomplete="off">
+<datalist id="items"></datalist>
+<div class="row" style="margin-top:10px">
+<button class="small-amt" onclick="setAmt(1)">1</button>
+<button class="small-amt" onclick="setAmt(16)">16</button>
+<button class="small-amt" onclick="setAmt(64)">64</button>
+<input id="amt" type="number" min="1" max="640" value="1" style="width:90px">
+<button style="flex:1" onclick="giveItem()">🎁 Give</button>
+</div>
+<div id="recent" class="chips"></div>
 </div>
 
 <div class="card">
@@ -95,6 +118,12 @@ h4{margin:16px 0 8px;color:#aaa;font-weight:500}
 <button id="btn-peaceful" onclick="action('peaceful')">🕊️ Peaceful</button>
 <button id="btn-normal" onclick="action('normal')">⚔️ Normal</button>
 </div>
+</div>
+
+<div class="card">
+<h3>Server <span class="muted" id="srv-state"></span></h3>
+<div id="srv-buttons" class="grid"></div>
+<p class="note" id="srv-note"></p>
 </div>
 
 <div id="status" class="status"></div>
@@ -152,10 +181,51 @@ async function call(url, body) {
   return d;
 }
 
+const SERVER_TEXT = {running:'🟢 on', starting:'🟡 starting…', stopped:'🔴 off', unknown:'⚪ not found'};
+const PENDING_TEXT = {
+  waiting: op => `⏳ Will ${op} once everyone has left. Players can keep playing until then.`,
+  warning: op => `⏳ Players were warned in chat. ${op === 'stop' ? 'Stopping' : 'Restarting'} in a few seconds.`,
+  working: op => op === 'stop' ? 'Stopping and saving the world…' : 'Restarting… back in a minute or two.'};
+function power(op, mode, ask) {
+  if (ask && !confirm(ask)) return;
+  call('/api/server', {op, mode});
+}
+function srvButton(text, onclick, cls) {
+  const b = el('button', cls || '', text);
+  b.onclick = onclick;
+  return b;
+}
+function renderServer(d) {
+  const box = $('srv-buttons'), note = $('srv-note'), n = d.players.length;
+  box.replaceChildren();
+  note.textContent = '';
+  $('srv-state').textContent = '· ' + (SERVER_TEXT[d.server] || d.server) + (n ? ` · ${n} playing` : '');
+  if (d.pending) {
+    note.textContent = PENDING_TEXT[d.pending.phase](d.pending.op);
+    if (d.pending.phase !== 'working') box.append(srvButton('✕ Cancel', () => power('cancel')));
+  } else if (d.server === 'stopped') {
+    box.append(srvButton('▶️ Start', () => power('start')));
+    note.textContent = 'Stays off, even after a reboot, until you press Start.';
+  } else if (n) {
+    const who = d.players.map(p => p.name).join(', ');
+    box.append(srvButton('⏳ Stop when everyone leaves', () => power('stop', 'empty')),
+               srvButton('⏳ Restart when everyone leaves', () => power('restart', 'empty')),
+               srvButton('⏹️ Stop now', () => power('stop', 'now',
+                 `${who} ${n > 1 ? 'are' : 'is'} playing. Warn them and stop in 30 seconds?`), 'danger'),
+               srvButton('🔄 Restart now', () => power('restart', 'now',
+                 `${who} ${n > 1 ? 'are' : 'is'} playing. Warn them and restart in 30 seconds?`), 'danger'));
+  } else if (d.server === 'running') {
+    box.append(srvButton('⏹️ Stop', () => power('stop', 'now', 'Turn the server off?')),
+               srvButton('🔄 Restart', () => power('restart', 'now', 'Restart the server?')));
+  }
+}
 function renderOnline(d) {
+  renderServer(d);
   const box = $('online');
   box.replaceChildren();
-  if (!d.players.length) box.append(el('p', 'empty', 'Nobody is playing right now.'));
+  if (d.server === 'stopped') box.append(el('p', 'empty', 'The server is off. Start it at the bottom of the page.'));
+  else if (d.server === 'starting') box.append(el('p', 'empty', 'The server is starting…'));
+  else if (!d.players.length) box.append(el('p', 'empty', 'Nobody is playing right now.'));
   for (const pl of d.players) {
     const row = el('div', 'who');
     const go = el('button', 'go' + (pl.name === $('player').value ? ' selected' : ''), '🧍 ' + pl.name);
@@ -214,6 +284,57 @@ async function saveTyped() {
 function action(a) {
   call('/api/action', {player:$('player').value, action:a});
 }
+// Suggestions only: any item name or ID can be typed. Labels whose ID differs from the name map here.
+const ALIASES = {'Steak':'cooked_beef', 'Cooked chicken':'cooked_chicken', 'Enchanted golden apple':'enchanted_golden_apple',
+  'Bed':'white_bed', 'Boat':'oak_boat', 'Wood':'oak_log', 'Planks':'oak_planks', 'Glass':'glass',
+  'Fireworks':'firework_rocket', 'Lapis':'lapis_lazuli', 'Bottle o\' enchanting':'experience_bottle',
+  'Horse armor':'diamond_horse_armor', 'Spawn egg (horse)':'horse_spawn_egg', 'Spawn egg (cat)':'cat_spawn_egg',
+  'Spawn egg (wolf)':'wolf_spawn_egg', 'Spawn egg (parrot)':'parrot_spawn_egg', 'Spawn egg (axolotl)':'axolotl_spawn_egg'};
+const SUGGEST = Object.keys(ALIASES).concat([
+  'diamond','emerald','gold_ingot','iron_ingot','netherite_ingot','coal','redstone','copper_ingot','amethyst_shard',
+  'golden_apple','golden_carrot','bread','cake','cookie','pumpkin_pie','apple','carrot','baked_potato',
+  'torch','lantern','ladder','chest','barrel','crafting_table','furnace','anvil','enchanting_table','bookshelf',
+  'stone','cobblestone','stone_bricks','dirt','sand','oak_log','spruce_log','birch_log','cherry_log','quartz_block',
+  'white_wool','glowstone','sea_lantern','tnt','flint_and_steel','water_bucket','lava_bucket','bucket',
+  'saddle','lead','name_tag','fishing_rod','shield','trident','crossbow','arrow','spectral_arrow',
+  'totem_of_undying','ender_pearl','eye_of_ender','experience_bottle','map','compass','clock','spyglass',
+  'bone_meal','wheat_seeds','oak_sapling','cherry_sapling','flower_pot','minecart','rail','powered_rail',
+  'diamond_horse_armor','wolf_armor','turtle_helmet','carved_pumpkin','jukebox','music_disc_pigstep','bell']);
+const label = s => (s[0].toUpperCase() + s.slice(1)).replaceAll('_', ' ');
+for (const s of [...new Set(SUGGEST.map(s => ALIASES[s] ? s : label(s)))].sort())
+  $('items').append(new Option(s));
+
+function setAmt(n) { $('amt').value = n; }
+function recent() {
+  try { return JSON.parse(localStorage.getItem('mcpanel-recent') || '[]'); } catch (e) { return []; }
+}
+function renderRecent() {
+  const box = $('recent');
+  box.replaceChildren();
+  for (const r of recent()) {
+    const b = el('button', '', `${r.amt} × ${r.item}`);
+    b.title = 'Give again';
+    b.onclick = () => give(r.item, r.amt);
+    box.append(b);
+  }
+}
+async function give(item, amt) {
+  const d = await call('/api/give', {player:$('player').value, item:ALIASES[item] || item, count:amt});
+  if (!d.ok) return;
+  const list = [{item, amt}].concat(recent().filter(r => r.item !== item || r.amt !== amt)).slice(0, 8);
+  try { localStorage.setItem('mcpanel-recent', JSON.stringify(list)); } catch (e) {}
+  renderRecent();
+}
+function giveItem() {
+  const item = $('item').value.trim();
+  if (item) give(item, $('amt').value);
+}
+function giveKit(kit) {
+  call('/api/give', {player:$('player').value, kit});
+}
+$('item').addEventListener('keydown', e => { if (e.key === 'Enter') giveItem(); });
+renderRecent();
+
 function sendTo() {
   call('/api/tp', {player:$('player').value, target:$('target').value});
 }
