@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#111">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Minecraft">
 <title>Minecraft Control</title>
 <style>
 body{font-family:system-ui,sans-serif;max-width:650px;margin:auto;padding:18px;background:#111;color:#eee}
@@ -31,10 +34,23 @@ h4{margin:16px 0 8px;color:#aaa;font-weight:500}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .danger{color:#e88;border-color:#744}
 .chips button{padding:8px 12px;font-weight:400;font-size:.9rem}
+.bar{position:sticky;top:0;z-index:5;background:#111;margin:0 -18px;padding:10px 18px;display:flex;gap:8px;align-items:center;border-bottom:1px solid #2a2a2a}
+.picks{display:flex;gap:6px;flex:1;overflow-x:auto}
+.picks button{padding:10px 14px;white-space:nowrap}
+.picks button.on{border-color:#6a6;background:#1f331f}
+.picks .live{color:#6c6}
+#server{scroll-margin-top:80px}
+.pill{color:#aaa;text-decoration:none;font-size:.9rem;white-space:nowrap;padding:10px 4px}
 </style>
 </head>
 <body>
 <h1>⛏️ Minecraft Control</h1>
+
+<div class="bar">
+<div id="picks" class="picks"></div>
+<a class="pill" id="srv-pill" href="#server" title="Server controls"></a>
+</div>
+<input type="hidden" id="player" value="{{ players[0] if players else '' }}">
 
 <div class="card">
 <h3>Online now</h3>
@@ -43,11 +59,8 @@ h4{margin:16px 0 8px;color:#aaa;font-weight:500}
 </div>
 
 <div class="card">
-<label>Player</label>
-<select id="player" onchange="loadOnline()">
-{% for p in players %}<option>{{p}}</option>{% endfor %}
-</select>
-<div class="grid" style="margin-top:10px">
+<h3>Player <span class="muted" id="sel-name"></span></h3>
+<div class="grid">
 <button onclick="action('creative')">🔵 Creative</button>
 <button onclick="action('survival')">🟢 Survival</button>
 <button onclick="action('heal')">❤️ Heal &amp; feed</button>
@@ -86,7 +99,7 @@ h4{margin:16px 0 8px;color:#aaa;font-weight:500}
 {% if people %}<div id="pfilter" class="chips" style="margin:0 0 10px"></div>{% endif %}
 <div id="places"><p class="empty">Loading…</p></div>
 <p class="note">🛏️ sets the selected player's respawn point to that place.</p>
-{% if people %}<button class="wide" id="pedit" onclick="toggleEdit()">✏️ Change who places are for</button>{% endif %}
+<button class="wide" id="pedit" onclick="toggleEdit()">✏️ Edit places</button>
 <h4>Add a place</h4>
 {% if people %}<div class="row">
 <input id="pname" placeholder="Name, e.g. Myles's house">
@@ -127,7 +140,7 @@ h4{margin:16px 0 8px;color:#aaa;font-weight:500}
 </div>
 </div>
 
-<div class="card">
+<div class="card" id="server">
 <h3>Server <span class="muted" id="srv-state"></span></h3>
 <div id="srv-buttons" class="grid"></div>
 <p class="note" id="srv-note"></p>
@@ -140,6 +153,7 @@ const $ = id => document.getElementById(id);
 const DIM_NAMES = {'minecraft:overworld':'Overworld','minecraft:the_nether':'Nether','minecraft:the_end':'The End'};
 const MAP_PORT = {{ map_port|tojson }};
 const PEOPLE = {{ people|tojson }};
+const PLAYERS = {{ players|tojson }};
 
 function mapUrl(x, z, dim) {
   const u = `${location.protocol}//${location.hostname}:${MAP_PORT}/`;
@@ -208,6 +222,7 @@ function renderServer(d) {
   box.replaceChildren();
   note.textContent = '';
   $('srv-state').textContent = '· ' + (SERVER_TEXT[d.server] || d.server) + (n ? ` · ${n} playing` : '');
+  $('srv-pill').textContent = SERVER_TEXT[d.server] || d.server;
   if (d.pending) {
     note.textContent = PENDING_TEXT[d.pending.phase](d.pending.op);
     if (d.pending.phase !== 'working') box.append(srvButton('✕ Cancel', () => power('cancel')));
@@ -227,7 +242,34 @@ function renderServer(d) {
                srvButton('🔄 Restart', () => power('restart', 'now', 'Restart the server?')));
   }
 }
+// The selected player is remembered per browser, so a kid's tablet stays on them.
+let onlineNow = [];
+try {
+  const saved = localStorage.getItem('mcpanel-player');
+  if (PLAYERS.includes(saved)) $('player').value = saved;
+} catch (e) {}
+function selectPlayer(name) {
+  $('player').value = name;
+  try { localStorage.setItem('mcpanel-player', name); } catch (e) {}
+  renderPicks();
+  loadOnline();
+}
+function renderPicks() {
+  const box = $('picks');
+  box.replaceChildren();
+  for (const p of PLAYERS) {
+    const b = el('button', p === $('player').value ? 'on' : '');
+    if (onlineNow.includes(p)) b.append(el('span', 'live', '● '));
+    b.append(p);
+    b.title = onlineNow.includes(p) ? p + ' is playing' : p + ' is not playing';
+    b.onclick = () => selectPlayer(p);
+    box.append(b);
+  }
+  $('sel-name').textContent = '· ' + $('player').value;
+}
 function renderOnline(d) {
+  onlineNow = d.players.map(p => p.name);
+  renderPicks();
   renderServer(d);
   const box = $('online');
   box.replaceChildren();
@@ -240,7 +282,7 @@ function renderOnline(d) {
     go.append(el('small', '', pl.x === undefined ? 'position unknown'
       : `${pl.x} ${pl.y} ${pl.z} · ${DIM_NAMES[pl.dimension] || pl.dimension}`));
     go.title = 'Select ' + pl.name;
-    go.onclick = () => { $('player').value = pl.name; loadOnline(); };
+    go.onclick = () => selectPlayer(pl.name);
     row.append(go);
     if (MAP_PORT && pl.x !== undefined) row.append(mapButton(pl.x, pl.z, pl.dimension));
     box.append(row);
@@ -267,7 +309,7 @@ function setFilter(f) {
 }
 function toggleEdit() {
   editing = !editing;
-  $('pedit').textContent = editing ? '✓ Done' : '✏️ Change who places are for';
+  $('pedit').textContent = editing ? '✓ Done' : '✏️ Edit places';
   renderPlaces(lastPlaces);
 }
 function renderFilter() {
@@ -282,7 +324,7 @@ function renderFilter() {
 function ownerPicker(pl) {
   const sel = el('select');
   sel.style.flex = '0 0 40%';
-  for (const f of [''].concat(PEOPLE)) sel.append(new Option(f ? 'For ' + f : 'For everyone', f));
+  for (const f of [''].concat(PEOPLE)) sel.append(new Option(f || 'Everyone', f));
   sel.value = pl.for || '';
   sel.onchange = () => call('/api/places/owner', {name:pl.name, for:sel.value});
   return sel;
@@ -303,8 +345,13 @@ function renderPlaces(places) {
     const go = el('button', 'go', '🏠 ' + pl.name);
     const whose = pl.for && !placeFilter ? ' · ' + pl.for : '';
     go.append(el('small', '', `${pl.x} ${pl.y} ${pl.z} · ${DIM_NAMES[pl.dimension] || pl.dimension}${whose}`));
+    const del = el('button', 'small danger', '✕');
+    del.title = 'Remove ' + pl.name;
+    del.onclick = () => confirm('Remove ' + pl.name + '?') && call('/api/places/delete', {name:pl.name});
     if (editing) {
-      row.append(go, ownerPicker(pl));
+      row.append(go);
+      if (PEOPLE.length) row.append(ownerPicker(pl));
+      row.append(del);
       box.append(row);
       continue;
     }
@@ -312,12 +359,8 @@ function renderPlaces(places) {
     const bed = el('button', 'small', '🛏️');
     bed.title = 'Respawn the selected player here';
     bed.onclick = () => call('/api/spawn', {player:$('player').value, place:pl.name});
-    const del = el('button', 'small', '✕');
-    del.title = 'Remove ' + pl.name;
-    del.onclick = () => confirm('Remove ' + pl.name + '?') && call('/api/places/delete', {name:pl.name});
     row.append(go, bed);
     if (MAP_PORT) row.append(mapButton(pl.x, pl.z, pl.dimension));
-    row.append(del);
     box.append(row);
   }
 }
@@ -401,6 +444,7 @@ function tp() {
   });
 }
 if (MAP_PORT) $('maplink').href = mapUrl();
+renderPicks();
 loadPlaces();
 loadOnline();
 setInterval(loadOnline, 5000);
