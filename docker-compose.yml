@@ -12,6 +12,7 @@ services:
       PEOPLE: ${PEOPLE:-}
       API_TOKEN: ${API_TOKEN:-}
       MAP_PORT: ${MAP_PORT:-}
+      VOICES: ${VOICES:-}
     volumes:
       # Lets this container run `docker exec <MC_CONTAINER> rcon-cli` against Minecraft.
       - /var/run/docker.sock:/var/run/docker.sock

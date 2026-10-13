@@ -53,6 +53,7 @@ Open `http://<server-ip>:8080`.
 | `PANEL_PORT` | Port for the panel. Default `8080`. |
 | `API_TOKEN` | Optional password. The browser asks once and remembers it. |
 | `MAP_PORT` | Port of your squaremap, if you have one. Empty hides the map buttons. |
+| `VOICES` | Optional. Characters you can chat as from `/backstage` (see below). |
 
 After editing `.env`, run `docker compose up -d`.
 
@@ -81,6 +82,20 @@ A scheduled "stop when everyone leaves" lives in memory, so restarting the panel
 
 After that the map updates itself as people play.
 
+## Optional: backstage (for the grown-ups)
+
+`http://<server-ip>:8080/backstage` is a page the main panel never links to, so kids using the panel won't find it. It has two tools:
+
+- **Chat as**: set `VOICES=Shopkeeper,Wizard` in `.env` and you can type in chat as those characters from your phone. It looks exactly like a player talking. Messages are one line, up to 200 characters.
+- **Events**: buttons that run your own scripts, such as a scripted visit from a character. Put the scripts and an `events.json` in `data/events/`, which isn't part of this repo:
+
+  ```json
+  [{"id": "visit", "label": "Wizard visit", "run": ["python3", "visit.py"],
+    "controls": [{"op": "next", "label": "⏭️ Next"}, {"op": "end", "label": "👋 Wrap up"}]}]
+  ```
+
+  One event runs at a time, inside the panel container (Python and the `docker` CLI are available). Its output shows on the page. Pressing a control writes its `op` to the file named in the script's `EVENT_CONTROL` environment variable; the script reads and deletes it.
+
 ## Security: read this
 
 - The panel mounts `/var/run/docker.sock` so it can run `docker exec`. That is effectively root on the Docker host. The panel only exposes a fixed set of commands for the players in `PLAYERS`, but treat it as a powerful tool.
@@ -105,6 +120,8 @@ docker exec <MC_CONTAINER> rcon-cli -- <command>
 - Dimensions must be one of the three vanilla ones.
 - Server controls only run `docker stop`, `start` and `restart` on `MC_CONTAINER`.
 - Item names may only contain letters, numbers and `_`. Enchantments only come from the kits defined in `app.py`.
+- Chat-as names must be in `VOICES`; the message is JSON-escaped into a `tellraw`.
+- Events run only scripts listed in `data/events/events.json` on the server; the browser picks one by id.
 
 Nothing typed in the browser reaches the server console unchecked.
 

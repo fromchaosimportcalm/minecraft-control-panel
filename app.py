@@ -18,6 +18,11 @@ PLAYERS = [p.strip() for p in os.environ.get("PLAYERS", "").split(",") if p.stri
 # Who places can belong to. These are people, not accounts, since kids may share one.
 # Empty hides place owners entirely.
 PEOPLE = [p.strip() for p in os.environ.get("PEOPLE", "").split(",") if p.strip()]
+# Characters a parent can chat as from /backstage (e.g. an in-game shopkeeper). Empty hides it.
+VOICES = [v.strip() for v in os.environ.get("VOICES", "").split(",") if v.strip()]
+# Private event scripts and their events.json live here, next to places.json, so they
+# stay out of this repo. See README "Backstage".
+EVENTS_DIR = os.path.join(os.path.dirname(PLACES_FILE), "events")
 
 DIMENSIONS = ["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"]
 NUM = re.compile(r"^-?\d+(?:\.\d+)?$")
@@ -448,6 +453,108 @@ def delete_place():
         places = [p for p in load_places() if p["name"] != name]
         save_places(places)
     return jsonify(ok=True, output=f"Removed {name}", places=places)
+
+# Backstage: parent-only tools on a page the main panel never links to, so kids
+# using the panel don't stumble on them.
+@app.get("/backstage")
+def backstage():
+    return render_template("backstage.html", voices=VOICES)
+
+MAX_SAY = 200
+
+@app.post("/api/say")
+def say():
+    if not authorized():
+        return jsonify(ok=False, error="Unauthorized"), 401
+    data = request.get_json(force=True)
+    voice = data.get("voice", "")
+    # One line only: newlines and control characters would break the command.
+    text = " ".join(str(data.get("text", "")).split())
+    if voice not in VOICES:
+        return jsonify(ok=False, error="Unknown voice"), 400
+    if not 1 <= len(text) <= MAX_SAY:
+        return jsonify(ok=False, error=f"Type a message (up to {MAX_SAY} characters)"), 400
+    # The same translation key as real chat, so it looks like <Name> text.
+    component = '{translate:"chat.type.text",with:[%s,%s]}' % (
+        json.dumps(voice, ensure_ascii=False), json.dumps(text, ensure_ascii=False))
+    rc, out = run_mc(["tellraw", "@a", component])
+    if "No player was found" in out:
+        return jsonify(ok=False, error="Nobody is online to hear it")
+    if rc != 0 or out:
+        return jsonify(ok=False, error=out or "Say failed")
+    return jsonify(ok=True, output=f"{voice}: {text}")
+
+# At most one event runs at a time: {"id", "label", "proc", "log", "controls"}.
+event = None
+event_lock = threading.Lock()
+EVENT_LOG_LINES = 40
+
+def load_events():
+    try:
+        with open(os.path.join(EVENTS_DIR, "events.json")) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+
+def control_file():
+    return os.path.join(EVENTS_DIR, ".control")
+
+def event_reader(job):
+    for line in job["proc"].stdout:
+        job["log"].append(line.rstrip())
+        del job["log"][:-EVENT_LOG_LINES]
+    job["proc"].wait()
+
+def event_info():
+    with event_lock:
+        if not event:
+            return None
+        rc = event["proc"].poll()
+        return {"id": event["id"], "label": event["label"], "running": rc is None,
+                "exit": rc, "log": list(event["log"]), "controls": event["controls"]}
+
+@app.get("/api/event")
+def event_status():
+    if not authorized():
+        return jsonify(ok=False, error="Unauthorized"), 401
+    events = [{"id": e["id"], "label": e["label"]} for e in load_events()]
+    return jsonify(ok=True, events=events, current=event_info())
+
+@app.post("/api/event")
+def event_op():
+    """op "start" runs an event's script; any other op is passed to the running script
+    through EVENT_CONTROL, a file it polls (e.g. "next", "end")."""
+    global event
+    if not authorized():
+        return jsonify(ok=False, error="Unauthorized"), 401
+    data = request.get_json(force=True)
+    op = data.get("op", "")
+    with event_lock:
+        running = event is not None and event["proc"].poll() is None
+        if op == "start":
+            if running:
+                return jsonify(ok=False, error=f"{event['label']} is already running"), 409
+            ev = next((e for e in load_events() if e["id"] == data.get("id")), None)
+            if not ev:
+                return jsonify(ok=False, error="Unknown event"), 400
+            try:
+                os.remove(control_file())
+            except FileNotFoundError:
+                pass
+            env = dict(os.environ, EVENT_CONTROL=control_file())
+            proc = subprocess.Popen(ev["run"], cwd=EVENTS_DIR, env=env, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            event = {"id": ev["id"], "label": ev["label"], "proc": proc, "log": [],
+                     "controls": ev.get("controls", [])}
+            threading.Thread(target=event_reader, args=(event,), daemon=True).start()
+            return jsonify(ok=True, output=f"Started {ev['label']}")
+        if not running:
+            return jsonify(ok=False, error="No event is running"), 400
+        if op not in [c["op"] for c in event["controls"]]:
+            return jsonify(ok=False, error="Unknown control"), 400
+        with open(control_file(), "w") as f:
+            f.write(op)
+        return jsonify(ok=True, output="Sent")
 
 @app.get("/health")
 def health():
